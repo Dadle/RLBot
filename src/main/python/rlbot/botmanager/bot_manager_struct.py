@@ -5,6 +5,7 @@ from rlbot.botmanager.bot_manager import BotManager
 from rlbot.utils.structures import game_data_struct as gd
 from rlbot.utils.structures.bot_input_struct import PlayerInput
 
+import json
 
 class BotManagerStruct(BotManager):
     def __init__(self, terminate_request_event, termination_complete_event, reload_request_event, bot_configuration,
@@ -15,6 +16,7 @@ class BotManagerStruct(BotManager):
         super().__init__(terminate_request_event, termination_complete_event, reload_request_event, bot_configuration,
                          name, team, index, agent_class_wrapper, agent_metadata_queue, quick_chat_queue_holder)
         self.game_tick_proto = None
+        self.score_json = {}
 
     def prepare_for_run(self):
         # Set up shared memory map (offset makes it so bot only writes to its own input!) and map to buffer
@@ -27,7 +29,34 @@ class BotManagerStruct(BotManager):
         self.game_interface.update_field_info_packet(field_info)
         return field_info
 
+    def write_score_changes_to_file(self):
+        """
+        Writing in score to file intended to be read by other processes between matches
+        """
+        new_score_json = []
+        for car in self.game_tick_packet.game_cars:
+            car_json = {}
+            score_info = car.score_info
+            car_json["car_name"] = car.name
+            car_json["car_team"] = car.team
+
+            # Add all score fields to the json
+            for field_name, field_type in score_info._fields_:
+                car_json[field_name] = getattr(score_info, field_name)
+            new_score_json.append(car_json)
+
+        if new_score_json == self.score_json:
+            return self.score_json
+
+        with open("match_scores.json", "w") as write_file:
+            json.dump(new_score_json, write_file)
+
+        self.score_json = new_score_json
+        return new_score_json
+
     def call_agent(self, agent: BaseAgent, agent_class):
+        match_scores = self.write_score_changes_to_file()
+        print("match_scores:", match_scores)
         controller_input = agent.get_output(self.game_tick_packet)
         if controller_input is None:
             get_logger("BotManager" + str(self.index))\
